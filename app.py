@@ -1,141 +1,67 @@
-import os
-import sys
 import streamlit as st
-import soundfile as sf
-import yt_dlp
-from pydub import AudioSegment
+import sys
+import os
 
 # =========================
-# PATH ROOT
+# Garantir path do projeto
 # =========================
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
+sys.path.append(ROOT_DIR)
 
 # =========================
-# IMPORTS REAIS DO PROJETO
+# Imports internos
 # =========================
 from perception.perception_engine import perceive
-
-from memory.chord_memory import build_chord_memory
-from memory.motif_extractor import extract_motifs
-
-from translation.harmony_reducer import reduce_harmony
-from translation.interval_mapper import map_intervals
+from music_memory.chord_memory import build_chord_memory
 from translation.lullaby_rules import apply_lullaby_rules
-
+from performance.midi_builder import build_midi
 from performance.render import render_audio
 
 # =========================
-# STREAMLIT CONFIG
+# Streamlit UI
 # =========================
 st.set_page_config(
-    page_title="🎹 Piano Lullaby AI",
-    page_icon="🎼",
-    layout="wide"
+    page_title="Piano Lullaby AI",
+    layout="centered"
 )
 
 st.title("🎹 Piano Lullaby AI")
-st.write(
-    "Conversão musical avançada: preserva **tempo, feeling, pausas e fraseado**, "
-    "traduzindo para piano acústico de ninar."
+st.caption("Transformando emoção em música de ninar")
+
+st.markdown("---")
+
+uploaded_file = st.file_uploader(
+    "Envie um áudio (voz, choro, humming, fala)",
+    type=["wav", "mp3", "ogg"]
 )
 
-# =========================
-# INPUTS
-# =========================
-col1, col2 = st.columns(2)
-
-with col1:
-    uploaded_file = st.file_uploader(
-        "📂 Upload MP3 ou WAV",
-        type=["mp3", "wav"]
-    )
-
-with col2:
-    youtube_url = st.text_input("🔗 Link do YouTube")
-
-generate = st.button("🎼 Gerar versão de ninar")
+generate = st.button("🌙 Gerar Lullaby")
 
 # =========================
-# PIPELINE
+# Pipeline Principal
 # =========================
-if generate:
-    try:
-        with st.spinner("🎧 Processando música..."):
-            os.makedirs("assets/uploads", exist_ok=True)
-            os.makedirs("assets/outputs", exist_ok=True)
+if generate and uploaded_file is not None:
+    with st.spinner("Analisando emoção e estrutura sonora..."):
+        perception = perceive(uploaded_file)
 
-            input_path = "assets/uploads/input.wav"
+    with st.spinner("Construindo memória harmônica..."):
+        harmony_memory = build_chord_memory(perception)
 
-            # -------- YOUTUBE --------
-            if youtube_url:
-                ydl_opts = {
-                    "format": "bestaudio/best",
-                    "outtmpl": "assets/uploads/temp",
-                    "postprocessors": [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "wav"
-                    }],
-                    "quiet": True
-                }
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([youtube_url])
-                input_path = "assets/uploads/temp.wav"
+    with st.spinner("Aplicando regras de lullaby..."):
+        lullaby_plan = apply_lullaby_rules(harmony_memory)
 
-            # -------- UPLOAD --------
-            elif uploaded_file:
-                audio = AudioSegment.from_file(uploaded_file)
-                audio.export(input_path, format="wav")
-            else:
-                st.warning("Envie um arquivo ou link.")
-                st.stop()
+    with st.spinner("Gerando MIDI..."):
+        midi_path = build_midi(lullaby_plan)
 
-            # =========================
-            # 1️⃣ PERCEPÇÃO
-            # =========================
-            perception = perceive(input_path)
-
-            # =========================
-            # 2️⃣ MEMÓRIA MUSICAL
-            # =========================
-            chords = build_chord_memory(perception)
-            motifs = extract_motifs(perception)
-
-            # =========================
-            # 3️⃣ TRADUÇÃO PARA NINAR
-            # =========================
-            reduced = reduce_harmony(chords)
-            mapped = map_intervals(reduced)
-            lullaby_score = apply_lullaby_rules(
-                mapped,
-                motifs,
-                tempo=perception["tempo"]
-            )
-
-            # =========================
-            # 4️⃣ RENDER
-            # =========================
-            audio_out, sr = render_audio(
-                lullaby_score,
-                duration=perception["duration"],
-                soundfont="assets/piano_felt.sf2"
-            )
-
-            output_path = "assets/outputs/piano_lullaby.wav"
-            sf.write(output_path, audio_out, sr)
-
-        # =========================
-        # OUTPUT
-        # =========================
-        st.success("✨ Música gerada com sucesso")
-        st.audio(output_path)
-
-        st.caption(
-            f"Duração: {int(perception['duration'])}s | "
-            f"Tempo: {int(perception['tempo'])} BPM"
+    with st.spinner("Renderizando piano..."):
+        audio_path = render_audio(
+            midi_path=midi_path,
+            soundfont_path="assets/piano_felt.sf2"
         )
 
-    except Exception as e:
-        st.error("Erro no processamento")
-        st.exception(e)
+    st.success("✨ Lullaby criada com sucesso!")
+
+    st.audio(audio_path)
+
+else:
+    st.info("Envie um áudio e clique em **Gerar Lullaby** 🎶")
