@@ -1,12 +1,12 @@
 """
 🎹 Piano Lullaby AI
-Recomposes any song into a professional acoustic piano lullaby for babies.
+Recomposes any song into a professional acoustic piano lullaby
+with the SAME duration as the original music.
 """
 
 import streamlit as st
 import librosa
 import numpy as np
-import soundfile as sf
 import yt_dlp
 import pretty_midi
 import subprocess
@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 st.title("🎹 Piano Lullaby AI")
-st.write("Transforme qualquer música em uma versão profissional de piano para ninar bebês.")
+st.write("Transforme qualquer música em uma versão de piano para ninar bebês, mantendo a duração original.")
 
 # ======================================================
 # YOUTUBE DOWNLOAD
@@ -49,6 +49,7 @@ def download_youtube(url):
 def analyze_music(path):
     y, sr = librosa.load(path, sr=22050, mono=True)
 
+    duration = librosa.get_duration(y=y, sr=sr)
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
 
     chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
@@ -59,26 +60,28 @@ def analyze_music(path):
 
     return {
         "tempo": tempo,
-        "key": key_note,
-        "chroma": chroma
+        "duration": duration,
+        "chroma": chroma,
+        "key": key_note
     }
 
 # ======================================================
 # BABY-SAFE HARMONIC REDUCTION
 # ======================================================
 
-BABY_INTERVALS = [0, 4, 7]  # uníssono, terça maior, quinta justa
+BABY_INTERVALS = [0, 4, 7]  # consonantes
 
-def reduce_harmony(chroma):
+def reduce_harmony(chroma, total_notes):
     notes = []
-    step = 12  # resolução lenta (previsível)
+    step = max(1, chroma.shape[1] // total_notes)
 
     for t in range(0, chroma.shape[1], step):
         frame = chroma[:, t]
         root = int(np.argmax(frame))
+        notes.append(root)
 
-        for interval in BABY_INTERVALS:
-            notes.append((root + interval) % 12)
+        if len(notes) >= total_notes:
+            break
 
     return notes
 
@@ -86,24 +89,30 @@ def reduce_harmony(chroma):
 # GENERATIVE LULLABY ARRANGEMENT
 # ======================================================
 
-def create_lullaby_midi(notes, base_tempo):
+def create_lullaby_midi(notes, base_tempo, total_duration):
     midi = pretty_midi.PrettyMIDI()
-    piano = pretty_midi.Instrument(program=pretty_midi.instrument_name_to_program("Acoustic Grand Piano"))
+    piano = pretty_midi.Instrument(
+        program=pretty_midi.instrument_name_to_program("Acoustic Grand Piano")
+    )
 
     tempo = max(55, min(70, base_tempo * 0.65))
-    beat = 60 / tempo
+    seconds_per_beat = 60 / tempo
+    note_duration = seconds_per_beat * 2  # notas longas e calmas
+
+    total_notes = int(total_duration / note_duration)
+    notes = notes[:total_notes]
 
     time = 0.0
     for n in notes:
-        pitch = 60 + n  # região central do piano
+        pitch = 60 + n
         note = pretty_midi.Note(
-            velocity=42,
+            velocity=40,
             pitch=pitch,
             start=time,
-            end=time + beat * 2
+            end=time + note_duration
         )
         piano.notes.append(note)
-        time += beat * 2
+        time += note_duration
 
     midi.instruments.append(piano)
     midi.write("lullaby.mid")
@@ -134,7 +143,7 @@ yt_url = st.text_input("Ou cole um link do YouTube")
 
 if st.button("🎼 GERAR LULLABY"):
     try:
-        with st.spinner("Analisando música e criando arranjo de ninar..."):
+        with st.spinner("Analisando música e criando versão de ninar..."):
             if yt_url:
                 input_path = download_youtube(yt_url)
             else:
@@ -143,12 +152,23 @@ if st.button("🎼 GERAR LULLABY"):
                     f.write(uploaded.getbuffer())
 
             analysis = analyze_music(input_path)
-            notes = reduce_harmony(analysis["chroma"])
-            create_lullaby_midi(notes, analysis["tempo"])
+
+            tempo_lullaby = max(55, min(70, analysis["tempo"] * 0.65))
+            note_duration = (60 / tempo_lullaby) * 2
+            total_notes = int(analysis["duration"] / note_duration)
+
+            notes = reduce_harmony(analysis["chroma"], total_notes)
+
+            create_lullaby_midi(
+                notes,
+                analysis["tempo"],
+                analysis["duration"]
+            )
+
             render_piano()
 
             st.audio("output.wav")
-            st.success("Versão de ninar criada com sucesso 🎹🍼")
+            st.success("Versão de ninar criada mantendo a duração original 🎹🍼")
 
     except Exception as e:
         st.error(f"Erro: {e}")
