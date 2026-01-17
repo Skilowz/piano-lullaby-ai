@@ -1,1 +1,8 @@
-
+streamlit
+librosa
+numpy
+soundfile
+yt-dlp
+scipy
+pydub
+pretty_midi
