@@ -1,7 +1,7 @@
 streamlit
 librosa
 numpy
-scipy
-pretty_midi
 soundfile
 yt-dlp
+pydub
+scipy
