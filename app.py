@@ -1,7 +1,6 @@
 """
-🎹 Piano Lullaby AI
-Recomposes any song into a professional acoustic piano lullaby
-with the SAME duration as the original music.
+🎹 Piano Lullaby AI — Expressive Edition
+Preserves musical feeling, phrasing, pauses and harmonic movement.
 """
 
 import streamlit as st
@@ -10,7 +9,6 @@ import numpy as np
 import yt_dlp
 import pretty_midi
 import subprocess
-import os
 
 # ======================================================
 # STREAMLIT CONFIG
@@ -23,7 +21,7 @@ st.set_page_config(
 )
 
 st.title("🎹 Piano Lullaby AI")
-st.write("Transforme qualquer música em uma versão de piano para ninar bebês, mantendo a duração original.")
+st.write("Versões de ninar que preservam o feeling, o tempo e a respiração da música original.")
 
 # ======================================================
 # YOUTUBE DOWNLOAD
@@ -43,86 +41,147 @@ def download_youtube(url):
     return "input.wav"
 
 # ======================================================
-# MUSICAL ANALYSIS (IA MUSICAL)
+# MUSICAL ANALYSIS (FEELING AWARE)
 # ======================================================
 
 def analyze_music(path):
     y, sr = librosa.load(path, sr=22050, mono=True)
-
     duration = librosa.get_duration(y=y, sr=sr)
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+
+    tempo, beats = librosa.beat.beat_track(y=y, sr=sr, units="time")
+
+    rms = librosa.feature.rms(y=y)[0]
+    rms_times = librosa.times_like(rms, sr=sr)
 
     chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-    energy = chroma.mean(axis=1)
-
-    key_index = int(np.argmax(energy))
-    key_note = librosa.midi_to_note(60 + key_index)
 
     return {
+        "y": y,
+        "sr": sr,
         "tempo": tempo,
         "duration": duration,
-        "chroma": chroma,
-        "key": key_note
+        "beats": beats,
+        "rms": rms,
+        "rms_times": rms_times,
+        "chroma": chroma
     }
 
 # ======================================================
-# BABY-SAFE HARMONIC REDUCTION
+# PHRASE SEGMENTATION (RESPIRAÇÃO MUSICAL)
 # ======================================================
 
-BABY_INTERVALS = [0, 4, 7]  # consonantes
+def segment_phrases(analysis):
+    rms = analysis["rms"]
+    times = analysis["rms_times"]
 
-def reduce_harmony(chroma, total_notes):
-    notes = []
-    step = max(1, chroma.shape[1] // total_notes)
+    threshold = np.percentile(rms, 25)
+    segments = []
 
-    for t in range(0, chroma.shape[1], step):
-        frame = chroma[:, t]
-        root = int(np.argmax(frame))
-        notes.append(root)
+    start = 0
+    for i in range(1, len(rms)):
+        if rms[i] < threshold and rms[i-1] >= threshold:
+            end = times[i]
+            if end - start > 0.8:
+                segments.append((start, end))
+                start = end
 
-        if len(notes) >= total_notes:
-            break
-
-    return notes
+    segments.append((start, analysis["duration"]))
+    return segments
 
 # ======================================================
-# GENERATIVE LULLABY ARRANGEMENT
+# HARMONIC EXTRACTION PER PHRASE
 # ======================================================
 
-def create_lullaby_midi(notes, base_tempo, total_duration):
+BABY_CHORDS = [
+    [0, 4, 7],   # maior
+    [0, 3, 7],   # menor
+    [0, 7, 12]   # power / aberto
+]
+
+def phrase_to_music(analysis, start, end):
+    sr = analysis["sr"]
+    chroma = analysis["chroma"]
+
+    t_start = int(start * sr / 512)
+    t_end = int(end * sr / 512)
+
+    frame = chroma[:, t_start:t_end].mean(axis=1)
+    root = int(np.argmax(frame))
+
+    chord_type = BABY_CHORDS[np.argmax([
+        frame[(root + i) % 12] for i in [4, 3, 7]
+    ])]
+
+    bass = root - 12
+    chord = [(root + i) for i in chord_type]
+
+    energy = analysis["rms"][t_start:t_end].mean()
+
+    return {
+        "bass": bass,
+        "chord": chord,
+        "energy": energy,
+        "duration": end - start
+    }
+
+# ======================================================
+# EXPRESSIVE LULLABY ARRANGEMENT
+# ======================================================
+
+def create_lullaby_midi(analysis):
     midi = pretty_midi.PrettyMIDI()
     piano = pretty_midi.Instrument(
         program=pretty_midi.instrument_name_to_program("Acoustic Grand Piano")
     )
 
-    tempo = max(55, min(70, base_tempo * 0.65))
+    tempo = max(55, min(70, analysis["tempo"] * 0.65))
     seconds_per_beat = 60 / tempo
-    note_duration = seconds_per_beat * 2  # notas longas e calmas
 
-    total_notes = int(total_duration / note_duration)
-    notes = notes[:total_notes]
+    phrases = segment_phrases(analysis)
 
     time = 0.0
-    for n in notes:
-        pitch = 60 + n
-        note = pretty_midi.Note(
-            velocity=40,
-            pitch=pitch,
-            start=time,
-            end=time + note_duration
+
+    for start, end in phrases:
+        phrase = phrase_to_music(analysis, start, end)
+
+        if phrase["energy"] < np.percentile(analysis["rms"], 20):
+            time += phrase["duration"] * 0.8
+            continue
+
+        # baixo
+        piano.notes.append(
+            pretty_midi.Note(
+                velocity=35,
+                pitch=48 + phrase["bass"] % 12,
+                start=time,
+                end=time + seconds_per_beat * 2
+            )
         )
-        piano.notes.append(note)
-        time += note_duration
+
+        # arpejo
+        arp_time = time
+        for n in phrase["chord"]:
+            piano.notes.append(
+                pretty_midi.Note(
+                    velocity=40,
+                    pitch=60 + n,
+                    start=arp_time,
+                    end=arp_time + seconds_per_beat
+                )
+            )
+            arp_time += seconds_per_beat * 0.75
+
+        time += phrase["duration"]
 
     midi.instruments.append(piano)
     midi.write("lullaby.mid")
 
 # ======================================================
-# REAL PIANO RENDERING (FLUIDSYNTH)
+# REAL PIANO RENDERING
 # ======================================================
 
 def render_piano():
-    command = [
+    subprocess.run([
         "fluidsynth",
         "-ni",
         "piano_felt.sf2",
@@ -131,8 +190,7 @@ def render_piano():
         "output.wav",
         "-r",
         "22050"
-    ]
-    subprocess.run(command, check=True)
+    ], check=True)
 
 # ======================================================
 # STREAMLIT UI
@@ -141,9 +199,9 @@ def render_piano():
 uploaded = st.file_uploader("Upload MP3 ou WAV", type=["mp3", "wav"])
 yt_url = st.text_input("Ou cole um link do YouTube")
 
-if st.button("🎼 GERAR LULLABY"):
+if st.button("🎼 GERAR LULLABY EXPRESSIVA"):
     try:
-        with st.spinner("Analisando música e criando versão de ninar..."):
+        with st.spinner("Analisando feeling musical e criando arranjo expressivo..."):
             if yt_url:
                 input_path = download_youtube(yt_url)
             else:
@@ -152,23 +210,11 @@ if st.button("🎼 GERAR LULLABY"):
                     f.write(uploaded.getbuffer())
 
             analysis = analyze_music(input_path)
-
-            tempo_lullaby = max(55, min(70, analysis["tempo"] * 0.65))
-            note_duration = (60 / tempo_lullaby) * 2
-            total_notes = int(analysis["duration"] / note_duration)
-
-            notes = reduce_harmony(analysis["chroma"], total_notes)
-
-            create_lullaby_midi(
-                notes,
-                analysis["tempo"],
-                analysis["duration"]
-            )
-
+            create_lullaby_midi(analysis)
             render_piano()
 
             st.audio("output.wav")
-            st.success("Versão de ninar criada mantendo a duração original 🎹🍼")
+            st.success("Versão de ninar criada com feeling preservado 🎹🍼")
 
     except Exception as e:
         st.error(f"Erro: {e}")
